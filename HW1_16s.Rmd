@@ -1,0 +1,173 @@
+---
+title: "HW1_16s"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(dada2); #packageVersion("dada2"); citation("dada2")
+library(ShortRead); #packageVersion("ShortRead")
+library(ggplot2); #packageVersion("ggplot2")
+library(phyloseq); #packageVersion("phyloseq")
+```
+
+```{r}
+path <- "/Users/Bruce Gan/Desktop/BI586/HW1/16s_sid_rads/Comm_data" # CHANGE ME to the directory containing the fastq files after unzipping.
+fns <- list.files(path)
+fns
+```
+
+```{r}
+fastqs <- fns[grepl(".fastq$", fns)]
+fastqs <- sort(fastqs)
+fnFs_rad <- sort(list.files(path, pattern = "_rad_18_16S_R1", full.names = TRUE))
+fnRs_rad <- sort(list.files(path, pattern = "_rad_18_16S_R2", full.names = TRUE))
+fnFs_sid <- sort(list.files(path, pattern = "_sid_18_16S_R1", full.names = TRUE))
+fnRs_sid <- sort(list.files(path, pattern = "_sid_18_16S_R2", full.names = TRUE))
+sample.names <- sapply(strsplit(basename(fnFs_rad), "_"), `[`, 1)
+sample.names2 <- sapply(strsplit(basename(fnFs_sid), "_"), `[`, 1)
+sample.names3 <- sapply(strsplit(basename(fnRs_rad), "_"), `[`, 1)
+sample.names4 <- sapply(strsplit(basename(fnRs_sid), "_"), `[`, 1)
+```
+
+```{r}
+filt_path <- file.path(path, "trimmed")
+if(!file_test("-d", filt_path)) dir.create(filt_path)
+filtFs <- file.path(filt_path, paste0(sample.names2, "_Fs_filt.fastq.gz"))
+filtRs <- file.path(filt_path, paste0(sample.names4, "_Rs_filt.fastq.gz"))
+filtFr <- file.path(filt_path, paste0(sample.names, "_Fr_filt.fastq.gz"))
+filtRr <- file.path(filt_path, paste0(sample.names3, "_Rr_filt.fastq.gz"))
+```
+
+```{r}
+out <- filterAndTrim(fnFs_rad, filtFr, fnRs_rad, filtRr, truncLen= 200, #to filter out 0 length sequences
+                     maxN=0, #DADA does not allow Ns
+                     maxEE=1, #allow 1 expected errors, where EE = sum(10^(-Q/10)); more conservative, model converges
+                     truncQ=2, 
+                     trimLeft=20, #N nucleotides to remove from the start of each read: ITS2 primer = F 20bp
+                     rm.phix=TRUE, #remove reads matching phiX genome
+                     compress=TRUE, multithread=FALSE) # On Windows set multithread=FALSE
+
+head(out)
+tail(out)
+```
+
+```{r}
+out2 <- filterAndTrim(fnFs_sid, filtFs, fnRs_sid, filtRs, truncLen= 200, #to filter out 0 length sequences
+                     maxN=0, #DADA does not allow Ns
+                     maxEE=1, #allow 1 expected errors, where EE = sum(10^(-Q/10)); more conservative, model converges
+                     truncQ=2, 
+                     trimLeft=20, #N nucleotides to remove from the start of each read: ITS2 primer = F 20bp
+                     rm.phix=TRUE, #remove reads matching phiX genome
+                     compress=TRUE, multithread=FALSE) # On Windows set multithread=FALSE
+
+head(out2)
+tail(out2)
+```
+
+
+```{r}
+plotQualityProfile(filtFr[1])
+plotQualityProfile(filtFs[1])
+plotQualityProfile(filtRr[1])
+plotQualityProfile(filtRs[1])
+```
+
+```{r}
+out <- filterAndTrim(fnFs_rad, filtFr, fnRs_rad, filtRr, truncLen= 200, #to filter out 0 length sequences
+                     maxN=0, #DADA does not allow Ns
+                     maxEE=1, #allow 1 expected errors, where EE = sum(10^(-Q/10)); more conservative, model converges
+                     truncQ=2, 
+                     trimLeft=20, #N nucleotides to remove from the start of each read: ITS2 primer = F 20bp
+                     rm.phix=TRUE, #remove reads matching phiX genome
+                     compress=TRUE, multithread=FALSE) # On Windows set multithread=FALSE
+
+head(out)
+tail(out)
+```
+
+```{r}
+out2 <- filterAndTrim(fnFs_sid, filtFs, fnRs_sid, filtRs, truncLen= 200, #to filter out 0 length sequences
+                     maxN=0, #DADA does not allow Ns
+                     maxEE=1, #allow 1 expected errors, where EE = sum(10^(-Q/10)); more conservative, model converges
+                     truncQ=2, 
+                     trimLeft=20, #N nucleotides to remove from the start of each read: ITS2 primer = F 20bp
+                     rm.phix=TRUE, #remove reads matching phiX genome
+                     compress=TRUE, multithread=FALSE) # On Windows set multithread=FALSE
+
+head(out2)
+tail(out2)
+```
+
+```{r}
+errFr <- learnErrors(filtFr, multithread=TRUE)
+errFs <- learnErrors(filtFs, multithread=TRUE)
+errRr <- learnErrors(filtRr, multithread=TRUE)
+errRs <- learnErrors(filtRs, multithread=TRUE)
+```
+```{r}
+plotErrors(errFr, nominalQ=TRUE)
+```
+
+dereplicates
+```{r}
+derepFr <- derepFastq(filtFr, verbose=TRUE)
+derepFs <- derepFastq(filtFs, verbose=TRUE)
+#derepRr <- derepFastq(filtRr, verbose=TRUE)
+#derepRs <- derepFastq(filtRs, verbose=TRUE)
+names(derepFr) <- sample.names
+names(derepFs) <- sample.names2
+#names(derepRr) <- sample.names3
+#names(derepRs) <- sample.names4
+```
+
+sample inference
+```{r}
+dadaFr <- dada(derepFr, err=errFr, multithread=TRUE)
+dadaFs <- dada(derepFs, err=errFs, multithread=TRUE)
+dadaRr <- dada(derepFr, err=errFr, multithread=TRUE)
+dadaRs <- dada(derepFr, err=errFr, multithread=TRUE)
+dadaFr[[1]]
+dadaFs[[1]]
+```
+
+construct sequence table
+```{r}
+seqtabr <- makeSequenceTable(dadaFr)
+seqtabs <- makeSequenceTable(dadaFs)
+head(seqtabr)
+head(seqtabs)
+```
+
+merge
+```{r}
+mergerr <- mergePairs(dadaFr, filtFr, dadaRr, filtRr, verbose=TRUE)
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+head(mergerr[[1]])
+head(mergers[[1]])
+```
+
+remove chimeras
