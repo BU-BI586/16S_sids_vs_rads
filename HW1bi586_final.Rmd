@@ -1,0 +1,260 @@
+---
+title: "Analyzing Bacterial Community Composition in Siderastrea siderea and Siderastrea radians"
+author: "Yaoyuan Gan, Simmi Nishad, Alexia Kotorov"
+date: "3/3/2021"
+output: html_document
+---
+#Introduction
+Bacterial communities of coral have been a recent focal point of research, particularly in trying to understand the potential role species abundance may play in disease such as Dark Spot Syndrome. Recent advancements in high-throughput sequencing of the 16S ribosomal region has allowed for the growth of sequence databases. Comparing the short, conserved, highly variable 16S ribosomal RNA sequence to known sequences in databases has enabled researchers to quickly assign taxonomy to bacterial microbiome samples. The purpose of our research was to leverage DADA2 (1.18.0), a platform designed to analyze FASTq sequences, to specifically study how bacterial communities differ between Siderastrea siderea and S. radians. Being of the same genus, located in similar regions, we were curious if there would be a characteristic bacterial composition for each species, or if it was more based on genus taxonomic level. Leveraging DADA2 within RMarkdown Version 1.4.1103, we were able to sort FASTQ data inputs into forward and reverse reads for the data samples, trim the reads, and merge the reads for a final taxonomic assignment output. Analysis throughout the workflow included a quality profile check of the data and error plots, to ensure maintenance of readable data.
+
+#the following versions were used 
+R 1.4.1103
+dada2 1.18.0
+ShortRead 1.48.0
+ggplot2 3.3.3
+phyloseq 1.34.0
+Rmisc 1.5
+```{r}
+library(dada2); #packageVersion("dada2"); citation("dada2")
+library(ShortRead); #packageVersion("ShortRead")
+library(ggplot2); #packageVersion("ggplot2")
+library(phyloseq); #packageVersion("phyloseq")
+library(Rmisc); #packageVersion("Rmisc")
+```
+
+
+```{r}
+path <- "/Users/simminishad/Desktop/BI586/16s_sid_rads/" # CHANGE ME to the directory containing the fastq files after unzipping.
+fns <- list.files(path)
+fns
+```
+
+```{r}
+fastqs <- fns[grepl(".fastq$", fns)]
+fastqs <- sort(fastqs)
+fnFs <- sort(list.files(path, pattern = "_R1", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern = "_R2", full.names = TRUE))
+sample.names <- sapply(strsplit(basename(fnFs), ".fastq"), `[`, 1)
+sample.names2 <- sapply(strsplit(basename(fnRs), ".fastq"), `[`, 1)
+```
+
+#primer
+Forward and reverse reads are surprisingly accurate. The primers are removed in our sequences so there is no need to trim in the later.
+```{r}
+FWD <- "TATGGTAATTGTCTCCTACTTRRSGCAGCAG"
+REV <- "AGTCAGTCAGCCGGACTACNVGGGTWTCTAAT"
+allOrients <- function(primer) {
+  # Create all orientations of the input sequence
+  require(Biostrings)
+  dna <- DNAString(primer)  # The Biostrings works w/ DNAString objects rather than character vectors
+  orients <- c(Forward = dna, Complement = complement(dna), Reverse = reverse(dna), 
+               RevComp = reverseComplement(dna))
+  return(sapply(orients, toString))  # Convert back to character vector
+}
+FWD.orients <- allOrients(FWD)
+REV.orients <- allOrients(REV)
+FWD.orients
+REV.orients
+fnFs.filtN <- file.path(path, "filtN", basename(fnFs)) # Put N-filterd files in filtN/ subdirectory
+fnRs.filtN <- file.path(path, "filtN", basename(fnRs))
+filterAndTrim(fnFs, fnFs.filtN, maxN = 0, multithread = TRUE)
+primerHits <- function(primer, fn) {
+  # Counts number of reads in which the primer is found
+  nhits <- vcountPattern(primer, sread(readFastq(fn)), fixed = FALSE)
+  return(sum(nhits > 0))
+}
+primerHits
+rbind(FWD.ForwardReads = sapply(FWD.orients, primerHits, fn = fnFs.filtN[[3]]), 
+      FWD.ReverseReads = sapply(FWD.orients, primerHits, fn = fnFs.filtN[[3]]), 
+      REV.ForwardReads = sapply(REV.orients, primerHits, fn = fnFs.filtN[[3]]), 
+      REV.ReverseReads = sapply(REV.orients, primerHits, fn = fnFs.filtN[[3]]))
+```
+#Filter and Trim
+```{r}
+filt_path <- file.path(path, "trimmed")
+if(!file_test("-d", filt_path)) dir.create(filt_path)
+filtFs <- file.path(filt_path, paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(filt_path, paste0(sample.names2, "_R_filt.fastq.gz"))
+```
+
+ 
+```{r}
+#couldn't plot qualityprofile without this step, our guess is that there are 0 length sequences. Just to filter out 0 length sequence in order to plot the graph, 
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen= 1, 
+                     maxN=0,
+                     maxEE=1,
+                     truncQ=2, 
+                     trimLeft = 20, 
+                     rm.phix=TRUE, 
+                     compress=TRUE, multithread=FALSE) 
+head(out)
+tail(out)
+```
+#plot quality profile 
+After importing the raw sequence read data, our first point was to make sure the sequence reads were reliable prior to continuing analysis. Quality profile plots provide a quick visual analysis of the accuracy of nucleotide assignment throughout the read. We plotted quality profiles for each sample, for both the forward and reverse read individually. Typically the reverse read has a lower quality profile, due to the nature of obtaining the reverse read, however, all of our samples had high quality profiles throughout the sequence until the end. No data point was deemed unreliable at this point from the plots, and we continued on to sort the data for further analysis.
+```{r}
+plotQualityProfile(filtFs[1])
+plotQualityProfile(filtRs[1])
+fig.cap="Fig. 1 The quality profile of the forward (left) and reverse (right) sequence reads of sample A10 showed good quality reads that can be analyzed. The forward read showed a high quality score consistently through majority of the sequence until the end, and the reverse also was surprisingly accurate. A heat map of quality score for nucleotide assignment allows for quick visual analysis of the sequence readout."
+```
+
+```{r}
+#All other settings are default, truncLen is 200 as suggested by the QualityProfile, no trimLeft is needed as suggested by the result of primer hit
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen= 200, 
+                     maxN=0, 
+                     maxEE=1, 
+                     truncQ=2, 
+                     rm.phix=TRUE, 
+                     compress=TRUE, multithread=FALSE) 
+head(out)
+tail(out)
+```
+#Error rates
+19 samples were used to learn the error rates. These rates are based on that the abundant sequences are all correct and the outliers are errors. These were later visualized in error plots. 
+```{r}
+errFs <- learnErrors(filtFs, multithread=TRUE)
+errRs <- learnErrors(filtRs, multithread=TRUE)
+```
+```{r}
+plotErrors(errFs, nominalQ=TRUE)
+fig.cap="Fig 2. The error plots of all the sample read files did not indicate any outliers that we should be concerned with. The sequence reads were accurate, as is consistent with our quality profile heatmaps."
+```
+
+#dereplicates
+this removes replicates and keeps the information pertaining to the unique sequences. The quality profile is based on the average of the dereplicate reads which is used to increase the accuracy of dada2.
+```{r}
+derepFs <- derepFastq(filtFs, verbose=TRUE)
+derepRs <- derepFastq(filtRs, verbose=TRUE)
+names(derepFs) <- sample.names
+names(derepRs) <- sample.names2
+```
+
+#sample inference
+This allows us to see true sequence variants from all the reads.
+```{r}
+dadaFs <- dada(derepFs, err=errFs, multithread=TRUE)
+dadaRs <- dada(derepRs, err=errRs, multithread=TRUE)
+dadaFs[[1]]
+dadaRs[[1]]
+```
+
+#construct sequence table
+```{r}
+seqtab <- makeSequenceTable(dadaFs)
+head(seqtab)
+```
+
+#merge
+merge paired forward and reverse reads together. THis can only be done witha 12 bp and identical overlap region. 0 mismatches were observed.
+```{r}
+merger <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose=TRUE)
+head(merger[[1]])
+```
+
+#remove chimeras
+Denoising chimeras to increase the accuracy of sequence variants. 25 bimeras were found.
+```{r}
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+sum(seqtab.nochim)/sum(seqtab)
+```
+
+#track reads
+A check to see which reads made it through the pipeline (progress check).
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+```
+
+#assign taxonomy
+SILVA is a taxonomic framework that includes aligned small ribosomal RNA such as 16S of known bacterial species. It is an online resource for quality checked sequences and is better at characterizing diverse environments. It has also been previously used to study 16S in coral. 
+Citation:
+Quast C, Pruesse E, Yilmaz P, Gerken J, Schweer T, Yarza P, Peplies J, Glöckner FO (2013) The SILVA ribosomal RNA gene database project: improved data processing and web-based tools. Opens external link in new windowNucl. Acids Res. 41 (D1): D590-D596.
+```{r}
+taxa <- assignTaxonomy(seqtab.nochim, "/Users/simminishad/Desktop/BI586/16s_sid_rads/silva_nr_v132_train_set.fa", multithread=TRUE)
+```
+
+```{r}
+taxa <- addSpecies(taxa, "/Users/simminishad/Desktop/BI586/16s_sid_rads/silva_species_assignment_v138.fa")
+```
+
+```{r}
+taxa.print <- taxa # Removing sequence rownames for display only
+rownames(taxa.print) <- NULL
+head(taxa.print)
+```
+```{r}
+write.csv(taxa, file="taxa.csv",row.name=TRUE,quote=FALSE)
+unname(head(taxa, 30))
+unname(taxa)
+```
+```{r}
+saveRDS(seqtab.nochim, file="final_seqtab_nochim.rds")
+saveRDS(taxa, file="final_taxa_blastCorrected.rds")
+```
+
+if need to read in previously saved datafiles
+```{r}
+seqtab.nochim <- readRDS("final_seqtab_nochim.rds")
+taxa <- readRDS("final_taxa_blastCorrected.rds")
+head(taxa)
+```
+
+#handoff to phyloseq
+Further analysis of data using the phyloseq package.
+```{r}
+library(phyloseq); packageVersion("phyloseq")
+library(Biostrings); packageVersion("Biostrings")
+library(ggplot2); packageVersion("ggplot2")
+theme_set(theme_bw())
+```
+mr16s_sampledata.csv file was used from Nicola Kriefall's github.
+```{r}
+samdf<-read.csv("mr16s_sampledata.csv")
+head(samdf)
+head(seqtab.nochim)
+head(taxa)
+rownames(samdf) <- samdf$sample
+```
+ 
+phyloseq
+```{r}
+library('phyloseq')
+library('ggplot2')
+library("Rmisc")
+```
+
+```{r}
+samdf<-read.csv("mr16s_sampledata.csv",  quote = "", 
+                 row.names = NULL, 
+                 stringsAsFactors = FALSE)
+rownames(samdf) <- samdf$id
+head(samdf)
+```
+```{r}
+ids <- paste0("sq", seq(1, length(colnames(seqtab.nochim))))
+colnames(seqtab.nochim)<-ids
+taxa2 <- cbind(taxa, rownames(taxa)) 
+rownames(taxa2)<-ids
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
+               sample_names(samdf), 
+               tax_table(taxa2))
+ps
+```
+
+#bar-plots
+Bar plot used with the top 90 sequences to visualize taxanomic distribution.
+```{r}
+top90 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:90]
+ps.top90 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.top90 <- prune_taxa(top90, ps.top90)
+plot_bar(ps.top90, x="Sample", fill="Class")
+fig.cap="The visual bar plot of abundance of each class of bacteria based on reads from each coral sample points to a few key species, gammaproteobacteria and oxyphotobacteria. However, there was no trend or bacterial species composition characteristic specifically to the sid or rad coral species."
+```
+
+#Conclusion
+In conclusion, analyzing sorted 16S ribosomal RNA sequences against known data points within the SILVA database showed us no characteristic bacteria microbiome composition for either species. Two bacterial species were more noticeably abundant throughout multiple samples, gammaproteobacteria and oxyphotobacteria, however this was not true of all samples and therefore cannot be determined to be specific to the Siderastrea genus. Mitochondrial DNA contamination may have resulted in the lack of characteristic bacterial composition, which had been noted in previous literature, but this hypothesis has not yet been confirmed. Utilizing short sequences from the 16S site has allowed for cheaper and faster sequencing outcomes, enabling high throughput outcomes of such diverse samples. The combined advances in data analytic tools, such as DADA2 in RStudio, and databases, provides a model for accurately sorting imported FASTq files and assigning taxonomic labels. As researchers continue to sequence the variable 16S site for an array of bacterial species, we can expect reference databases like SILVA to expand, allowing for more accurate outcomes. Similarly, advances in sequencing tools that would reduce the cost and time of sequencing the entire V1-9 variable regions of the 16S site would greatly benefit such research projects by increasing confidence in taxonomic assignments.
